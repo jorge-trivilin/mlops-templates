@@ -1,5 +1,4 @@
-name: create-compute
-
+name: use-or-create-compute
 on: 
   workflow_call:
     inputs:
@@ -28,7 +27,7 @@ on:
       creds:
         required: true
 jobs:
-  create-compute:
+  use-or-create-compute:
     runs-on: ubuntu-latest
     steps:
       - name: 'Az CLI login'
@@ -36,12 +35,32 @@ jobs:
         with:
           creds: ${{secrets.creds}}
           enable-AzPSSession: true 
+      
       - name: install-extension
-        run:  az extension add -n ml -y
+        run: az extension add -n ml -y
+      
       - name: update-extension
         run: az extension update -n ml
+      
+      - name: check-compute-exists
+        id: check_compute
+        run: |
+          EXISTS=$(az ml compute list -g ${{ inputs.resource_group }} -w ${{ inputs.workspace_name }} --query "[?name=='${{ inputs.cluster_name }}'].name" -o tsv)
+          if [ -n "$EXISTS" ]; then
+            echo "Compute cluster ${{ inputs.cluster_name }} exists."
+            echo "compute_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Compute cluster ${{ inputs.cluster_name }} does not exist."
+            echo "compute_exists=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: use-existing-compute
+        if: steps.check_compute.outputs.compute_exists == 'true'
+        run: |
+          echo "Using existing compute cluster ${{ inputs.cluster_name }}"
+      
       - name: create-compute-default-tier
-        if: ${{ inputs.cluster_tier == ''}}
+        if: steps.check_compute.outputs.compute_exists == 'false' && inputs.cluster_tier == ''
         run: |
           az ml compute create --name ${{ inputs.cluster_name }} \
                                   --type AmlCompute \
@@ -51,8 +70,9 @@ jobs:
                                   --max-instances ${{ inputs.max_instances }} \
                                   --resource-group ${{ inputs.resource_group }} \
                                   --workspace-name ${{ inputs.workspace_name }}
+      
       - name: create-compute-using-tier
-        if: ${{ inputs.cluster_tier != ''}}
+        if: steps.check_compute.outputs.compute_exists == 'false' && inputs.cluster_tier != ''
         run: |
           az ml compute create --name ${{ inputs.cluster_name }} \
                                   --type AmlCompute \
@@ -62,4 +82,3 @@ jobs:
                                   --max-instances ${{ inputs.max_instances }} \
                                   --resource-group ${{ inputs.resource_group }} \
                                   --workspace-name ${{ inputs.workspace_name }}
-
